@@ -2,16 +2,26 @@ from calendar import monthrange
 from datetime import date
 
 from django.contrib.auth.models import User
+from django.db import transaction
+from django.http import HttpResponse
 from django.utils import timezone
+from openpyxl import load_workbook
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 
-from .models import Attendance, AttendanceAction, Teacher, Course, Routine, RoutineChangeRequest, RoutineEnrollment
+from . import scheduling
+from .exporters import export_routines_excel, export_routines_pdf
+from .models import (
+    Attendance, AttendanceAction, Room, Teacher, Course, Routine,
+    RoutineChangeRequest, RoutineEnrollment, RoutineRequirement, TimeSlot
+)
 from .serializers import (
-    AttendanceSerializer, TeacherSerializer, CourseSerializer,
+    AttendanceSerializer, TeacherSerializer, CourseSerializer, RoomSerializer,
     RoutineSerializer, RoutineChangeRequestSerializer, RoutineEnrollmentSerializer,
+    RoutineRequirementSerializer, TimeSlotSerializer,
     RegisterSerializer, UserSerializer
 )
 from .permissions import IsAdminUser
@@ -98,6 +108,41 @@ class CourseViewSet(viewsets.ModelViewSet):
 
 
 # -------------------------
+# ROOM
+# -------------------------
+class RoomViewSet(viewsets.ModelViewSet):
+    queryset = Room.objects.all().order_by('name')
+    serializer_class = RoomSerializer
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsAdminUser()]
+        return [permissions.IsAuthenticated()]
+
+
+# -------------------------
+# TIME SLOT
+# -------------------------
+class TimeSlotViewSet(viewsets.ModelViewSet):
+    queryset = TimeSlot.objects.all()
+    serializer_class = TimeSlotSerializer
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsAdminUser()]
+        return [permissions.IsAuthenticated()]
+
+
+# -------------------------
+# ROUTINE REQUIREMENT (GENERATOR INPUT)
+# -------------------------
+class RoutineRequirementViewSet(viewsets.ModelViewSet):
+    queryset = RoutineRequirement.objects.select_related('course', 'teacher').all()
+    serializer_class = RoutineRequirementSerializer
+    permission_classes = [IsAdminUser]
+
+
+# -------------------------
 # ROUTINE
 # -------------------------
 class RoutineViewSet(viewsets.ModelViewSet):
@@ -105,13 +150,13 @@ class RoutineViewSet(viewsets.ModelViewSet):
     serializer_class = RoutineSerializer
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'generate', 'generate_commit', 'import_excel']:
             return [IsAdminUser()]
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
         queryset = Routine.objects.select_related(
-            'teacher', 'course'
+            'teacher', 'course', 'room_ref', 'time_slot'
         ).prefetch_related(
             'enrollments', 'enrollments__student'
         )
@@ -138,6 +183,89 @@ class RoutineViewSet(viewsets.ModelViewSet):
         routines = self.get_queryset()
         serializer = self.get_serializer(routines, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], url_path='generate')
+    def generate(self, request):
+        requirement_ids = request.data.get('requirement_ids')
+        preview = scheduling.generate_preview(requirement_ids=requirement_ids)
+        return Response(preview)
+
+    @action(detail=False, methods=['post'], url_path='generate/commit')
+    def generate_commit(self, request):
+        rows = request.data.get('rows', [])
+        created = []
+        rejected = []
+
+        with transaction.atomic():
+            for row in rows:
+                try:
+                    teacher = Teacher.objects.filter(id=row.get('teacher_id')).first() if row.get('teacher_id') else None
+                    course = Course.objects.get(id=row['course_id'])
+                    room = Room.objects.get(id=row['room_id'])
+                    time_slot = TimeSlot.objects.get(id=row['time_slot_id'])
+                    day = row['day']
+                    section = row.get('section', '')
+
+                    scheduling.assert_no_conflicts(day, time_slot, teacher, room, section)
+
+                    routine = Routine.objects.create(
+                        teacher=teacher,
+                        course=course,
+                        day=day,
+                        section=section,
+                        room_ref=room,
+                        time_slot=time_slot,
+                        start_time=time_slot.start_time,
+                        end_time=time_slot.end_time,
+                        room=room.name,
+                    )
+                    created.append(RoutineSerializer(routine).data)
+                except (scheduling.ConflictError, Course.DoesNotExist, Room.DoesNotExist, TimeSlot.DoesNotExist, KeyError) as exc:
+                    rejected.append({'row': row, 'reason': str(exc)})
+
+        return Response({'created': created, 'rejected': rejected})
+
+    @action(detail=False, methods=['get'], url_path='export')
+    def export(self, request):
+        # Note: named 'type', not 'format' - DRF reserves the 'format' query
+        # param for its own content-negotiation and 404s if it doesn't match
+        # a registered renderer (e.g. JSON/browsable API), which 'pdf'/'excel' never would.
+        export_type = request.query_params.get('type')
+        routines = self.get_queryset()
+
+        if export_type == 'pdf':
+            content = export_routines_pdf(routines)
+            response = HttpResponse(content, content_type='application/pdf')
+            response['Content-Disposition'] = 'attachment; filename="routine.pdf"'
+            return response
+
+        if export_type == 'excel':
+            content = export_routines_excel(routines)
+            response = HttpResponse(
+                content,
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            )
+            response['Content-Disposition'] = 'attachment; filename="routine.xlsx"'
+            return response
+
+        return Response(
+            {"detail": "Query parameter 'type' must be 'pdf' or 'excel'."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    @action(detail=False, methods=['post'], url_path='import-excel', parser_classes=[MultiPartParser])
+    def import_excel(self, request):
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({"detail": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            workbook = load_workbook(upload, data_only=True)
+        except Exception:
+            return Response({"detail": "Could not read the uploaded file as an Excel workbook."}, status=status.HTTP_400_BAD_REQUEST)
+
+        report = scheduling.import_routines_from_workbook(workbook)
+        return Response(report)
 
 
 # -------------------------

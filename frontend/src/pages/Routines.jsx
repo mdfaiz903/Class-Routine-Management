@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import API from '../api/axios';
 import Modal from '../components/Modal';
 import { useAuth } from '../context/useAuth';
@@ -8,6 +8,8 @@ export default function Routines() {
     const [routines, setRoutines] = useState([]);
     const [teachers, setTeachers] = useState([]);
     const [courses, setCourses] = useState([]);
+    const [rooms, setRooms] = useState([]);
+    const [timeSlots, setTimeSlots] = useState([]);
     const [students, setStudents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [modalOpen, setModalOpen] = useState(false);
@@ -17,11 +19,14 @@ export default function Routines() {
         teacher_id: '',
         course_id: '',
         day: 'Monday',
-        start_time: '',
-        end_time: '',
-        room: '',
+        section: '',
+        room_id: '',
+        time_slot_id: '',
     });
     const [error, setError] = useState('');
+    const [importResult, setImportResult] = useState(null);
+    const [importModalOpen, setImportModalOpen] = useState(false);
+    const fileInputRef = useRef(null);
 
     const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -39,6 +44,14 @@ export default function Routines() {
     }, [user?.isTeacher]);
 
     const fetchDropdowns = useCallback(async () => {
+        try {
+            const [rmRes, tsRes] = await Promise.all([API.get('rooms/'), API.get('timeslots/')]);
+            setRooms(rmRes.data);
+            setTimeSlots(tsRes.data);
+        } catch (err) {
+            console.error('Failed to fetch dropdown data', err);
+        }
+
         if (!user?.isAdmin) return;
         try {
             const [tRes, cRes, uRes] = await Promise.all([API.get('teachers/'), API.get('courses/'), API.get('users/')]);
@@ -57,7 +70,7 @@ export default function Routines() {
 
     const openCreate = () => {
         setEditing(null);
-        setForm({ teacher_id: '', course_id: '', day: 'Monday', start_time: '', end_time: '', room: '' });
+        setForm({ teacher_id: '', course_id: '', day: 'Monday', section: '', room_id: '', time_slot_id: '' });
         setSelectedStudentIds([]);
         setError('');
         setModalOpen(true);
@@ -69,9 +82,9 @@ export default function Routines() {
             teacher_id: routine.teacher?.id || '',
             course_id: routine.course?.id || '',
             day: routine.day,
-            start_time: routine.start_time,
-            end_time: routine.end_time,
-            room: routine.room,
+            section: routine.section || '',
+            room_id: routine.room?.id || '',
+            time_slot_id: routine.time_slot?.id || '',
         });
         setSelectedStudentIds((routine.enrollments || []).map((enrollment) => String(enrollment.student?.id)));
         setError('');
@@ -106,13 +119,14 @@ export default function Routines() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
+        const payload = { ...form, teacher_id: form.teacher_id || null };
         try {
             let routine;
             if (editing) {
-                const res = await API.patch(`routines/${editing.id}/`, form);
+                const res = await API.patch(`routines/${editing.id}/`, payload);
                 routine = res.data;
             } else {
-                const res = await API.post('routines/', form);
+                const res = await API.post('routines/', payload);
                 routine = res.data;
             }
             await syncRoutineEnrollments(routine, selectedStudentIds);
@@ -130,6 +144,50 @@ export default function Routines() {
             fetchRoutines();
         } catch (err) {
             console.error('Delete failed', err);
+        }
+    };
+
+    const downloadBlob = (blob, filename) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    };
+
+    const handleExport = async (type) => {
+        try {
+            const res = await API.get(`routines/export/?type=${type}`, { responseType: 'blob' });
+            downloadBlob(res.data, type === 'pdf' ? 'routine.pdf' : 'routine.xlsx');
+        } catch (err) {
+            console.error('Export failed', err);
+        }
+    };
+
+    const handleImportClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleImportFile = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await API.post('routines/import-excel/', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            setImportResult(res.data);
+            setImportModalOpen(true);
+            fetchRoutines();
+        } catch (err) {
+            setImportResult({ errors: [{ row: '-', error: err.response?.data?.detail || 'Import failed' }], created_count: 0, failed_count: 1 });
+            setImportModalOpen(true);
         }
     };
 
@@ -175,11 +233,31 @@ export default function Routines() {
                         <span className="header-badge">All Routines</span>
                     )}
                 </div>
-                {user?.isAdmin && (
-                    <button className="btn btn-primary" onClick={openCreate}>
-                        + Add Routine
+                <div className="header-left">
+                    <button className="btn btn-secondary btn-sm" onClick={() => handleExport('pdf')}>
+                        Export PDF
                     </button>
-                )}
+                    <button className="btn btn-secondary btn-sm" onClick={() => handleExport('excel')}>
+                        Export Excel
+                    </button>
+                    {user?.isAdmin && (
+                        <>
+                            <button className="btn btn-secondary btn-sm" onClick={handleImportClick}>
+                                Import Excel
+                            </button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".xlsx"
+                                style={{ display: 'none' }}
+                                onChange={handleImportFile}
+                            />
+                            <button className="btn btn-primary" onClick={openCreate}>
+                                + Add Routine
+                            </button>
+                        </>
+                    )}
+                </div>
             </div>
 
             <div className="table-container">
@@ -188,6 +266,7 @@ export default function Routines() {
                         <tr>
                             <th>Day</th>
                             <th>Course</th>
+                            <th>Section</th>
                             <th>Teacher</th>
                             <th>Time</th>
                             <th>Room</th>
@@ -198,7 +277,7 @@ export default function Routines() {
                     <tbody>
                         {routines.length === 0 ? (
                             <tr>
-                                <td colSpan={user?.isAdmin ? 7 : 5} className="empty-row">No routines found</td>
+                                <td colSpan={user?.isAdmin ? 8 : 6} className="empty-row">No routines found</td>
                             </tr>
                         ) : (
                             routines.map((r) => (
@@ -212,13 +291,14 @@ export default function Routines() {
                                         <div className="cell-main">{r.course?.name}</div>
                                         <div className="cell-sub">{r.course?.code}</div>
                                     </td>
-                                    <td>{r.teacher?.name}</td>
+                                    <td><span className="badge">{r.section || '—'}</span></td>
+                                    <td>{r.teacher?.name || 'TBA'}</td>
                                     <td>
                                         <span className="time-range">
-                                            {r.start_time} - {r.end_time}
+                                            {r.time_slot ? `${r.time_slot.start_time} - ${r.time_slot.end_time}` : '—'}
                                         </span>
                                     </td>
-                                    <td><span className="badge">{r.room}</span></td>
+                                    <td><span className="badge">{r.room?.name}</span></td>
                                     {user?.isAdmin && (
                                         <td className="students-cell">
                                             <div className="cell-main">{r.enrollments?.length || 0} assigned</div>
@@ -252,9 +332,8 @@ export default function Routines() {
                             <select
                                 value={form.teacher_id}
                                 onChange={(e) => setForm({ ...form, teacher_id: e.target.value })}
-                                required
                             >
-                                <option value="">Select Teacher</option>
+                                <option value="">TBA (unassigned)</option>
                                 {teachers.map((t) => (
                                     <option key={t.id} value={t.id}>
                                         {t.name}
@@ -280,52 +359,65 @@ export default function Routines() {
                         </div>
                     </div>
 
-                    <div className="form-group">
-                        <label>Day</label>
-                        <select
-                            value={form.day}
-                            onChange={(e) => setForm({ ...form, day: e.target.value })}
-                            required
-                        >
-                            {DAYS.map((d) => (
-                                <option key={d} value={d}>
-                                    {d}
-                                </option>
-                            ))}
-                        </select>
+                    <div className="form-row">
+                        <div className="form-group">
+                            <label>Day</label>
+                            <select
+                                value={form.day}
+                                onChange={(e) => setForm({ ...form, day: e.target.value })}
+                                required
+                            >
+                                {DAYS.map((d) => (
+                                    <option key={d} value={d}>
+                                        {d}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="form-group">
+                            <label>Section</label>
+                            <input
+                                type="text"
+                                value={form.section}
+                                onChange={(e) => setForm({ ...form, section: e.target.value })}
+                                placeholder="e.g. 3B"
+                            />
+                        </div>
                     </div>
 
                     <div className="form-row">
                         <div className="form-group">
-                            <label>Start Time</label>
-                            <input
-                                type="time"
-                                value={form.start_time}
-                                onChange={(e) => setForm({ ...form, start_time: e.target.value })}
+                            <label>Time Slot</label>
+                            <select
+                                value={form.time_slot_id}
+                                onChange={(e) => setForm({ ...form, time_slot_id: e.target.value })}
                                 required
-                            />
+                            >
+                                <option value="">Select Time Slot</option>
+                                {timeSlots.map((slot) => (
+                                    <option key={slot.id} value={slot.id}>
+                                        {slot.start_time} - {slot.end_time}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
 
                         <div className="form-group">
-                            <label>End Time</label>
-                            <input
-                                type="time"
-                                value={form.end_time}
-                                onChange={(e) => setForm({ ...form, end_time: e.target.value })}
+                            <label>Room</label>
+                            <select
+                                value={form.room_id}
+                                onChange={(e) => setForm({ ...form, room_id: e.target.value })}
                                 required
-                            />
+                            >
+                                <option value="">Select Room</option>
+                                {rooms.map((room) => (
+                                    <option key={room.id} value={room.id}>
+                                        {room.name}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
-                    </div>
-
-                    <div className="form-group">
-                        <label>Room</label>
-                        <input
-                            type="text"
-                            value={form.room}
-                            onChange={(e) => setForm({ ...form, room: e.target.value })}
-                            placeholder="e.g. Room 101"
-                            required
-                        />
                     </div>
 
                     <div className="form-group">
@@ -356,6 +448,36 @@ export default function Routines() {
                         </button>
                     </div>
                 </form>
+            </Modal>
+
+            <Modal isOpen={importModalOpen} onClose={() => setImportModalOpen(false)} title="Import Results">
+                {importResult && (
+                    <div>
+                        <div className={importResult.failed_count > 0 ? 'alert alert-error' : 'alert alert-success'}>
+                            Created {importResult.created_count} row(s), {importResult.failed_count} failed.
+                        </div>
+                        {importResult.errors?.length > 0 && (
+                            <div className="table-container">
+                                <table className="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Row</th>
+                                            <th>Error</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {importResult.errors.map((err, i) => (
+                                            <tr key={i}>
+                                                <td>{err.row}</td>
+                                                <td className="reason-cell">{err.error}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                )}
             </Modal>
         </div>
     );

@@ -41,6 +41,28 @@ export default function Layout() {
                         <span>Routines</span>
                     </NavLink>
 
+                    {user?.isAdmin && (
+                        <>
+                            <div className="nav-section-label">Scheduling Setup</div>
+                            <NavLink to="/rooms" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
+                                <span className="nav-icon">🚪</span>
+                                <span>Rooms</span>
+                            </NavLink>
+                            <NavLink to="/timeslots" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
+                                <span className="nav-icon">⏰</span>
+                                <span>Time Slots</span>
+                            </NavLink>
+                            <NavLink to="/routine-requirements" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
+                                <span className="nav-icon">🧾</span>
+                                <span>Requirements</span>
+                            </NavLink>
+                            <NavLink to="/generate-routine" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
+                                <span className="nav-icon">✨</span>
+                                <span>Generate Routine</span>
+                            </NavLink>
+                        </>
+                    )}
+
                     {(user?.isAdmin || user?.isTeacher) && (
                         <NavLink to="/change-requests" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
                             <span className="nav-icon">📝</span>

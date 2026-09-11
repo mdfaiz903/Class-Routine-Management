@@ -1,4 +1,8 @@
-from .models import Attendance, AttendanceAction, Routine, RoutineChangeRequest, RoutineEnrollment, Teacher, Course
+from .models import (
+    Attendance, AttendanceAction, Room, Routine, RoutineChangeRequest,
+    RoutineEnrollment, RoutineRequirement, TimeSlot, Teacher, Course
+)
+from . import scheduling
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
@@ -132,7 +136,19 @@ class TeacherSerializer(serializers.ModelSerializer):
 class CourseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
-        fields = ['id', 'name', 'code']     
+        fields = ['id', 'name', 'code']
+
+
+class RoomSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Room
+        fields = ['id', 'name', 'room_type']
+
+
+class TimeSlotSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TimeSlot
+        fields = ['id', 'label', 'start_time', 'end_time', 'order']
 
 
 class RoutineEnrollmentSerializer(serializers.ModelSerializer):
@@ -162,7 +178,7 @@ class RoutineEnrollmentSerializer(serializers.ModelSerializer):
             'end_time': routine.end_time.strftime('%H:%M:%S'),
             'room': routine.room,
             'course': CourseSerializer(routine.course).data,
-            'teacher': TeacherSerializer(routine.teacher).data,
+            'teacher': TeacherSerializer(routine.teacher).data if routine.teacher else None,
         }
 
     def validate_student_id(self, user):
@@ -183,18 +199,70 @@ class RoutineEnrollmentSerializer(serializers.ModelSerializer):
         
 class RoutineSerializer(serializers.ModelSerializer):
     teacher = TeacherSerializer(read_only=True)
-    teacher_id = serializers.PrimaryKeyRelatedField(queryset=Teacher.objects.all(), source='teacher', write_only=True)
+    teacher_id = serializers.PrimaryKeyRelatedField(
+        queryset=Teacher.objects.all(), source='teacher', write_only=True, required=False, allow_null=True
+    )
     course = CourseSerializer(read_only=True)
     course_id = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all(), source='course', write_only=True)
+    room = RoomSerializer(source='room_ref', read_only=True)
+    room_id = serializers.PrimaryKeyRelatedField(queryset=Room.objects.all(), source='room_ref', write_only=True)
+    time_slot = TimeSlotSerializer(read_only=True)
+    time_slot_id = serializers.PrimaryKeyRelatedField(queryset=TimeSlot.objects.all(), source='time_slot', write_only=True)
     enrollments = RoutineEnrollmentSerializer(many=True, read_only=True)
-    
+
     class Meta:
         model = Routine
         fields = [
-            'id', 'teacher', 'teacher_id', 'course', 'course_id', 'day',
-            'start_time', 'end_time', 'room', 'enrollments'
-        ]       
-        
+            'id', 'teacher', 'teacher_id', 'course', 'course_id', 'day', 'section',
+            'room', 'room_id', 'time_slot', 'time_slot_id', 'enrollments'
+        ]
+
+    def validate(self, attrs):
+        day = attrs.get('day', getattr(self.instance, 'day', None))
+        time_slot = attrs.get('time_slot', getattr(self.instance, 'time_slot', None))
+        teacher = attrs.get('teacher', getattr(self.instance, 'teacher', None))
+        room = attrs.get('room_ref', getattr(self.instance, 'room_ref', None))
+        section = attrs.get('section', getattr(self.instance, 'section', ''))
+
+        try:
+            scheduling.assert_no_conflicts(
+                day, time_slot, teacher, room, section,
+                exclude_routine_id=self.instance.id if self.instance else None,
+            )
+        except scheduling.ConflictError as exc:
+            raise serializers.ValidationError(str(exc))
+
+        return attrs
+
+    def create(self, validated_data):
+        time_slot = validated_data.get('time_slot')
+        room = validated_data.get('room_ref')
+        validated_data['start_time'] = time_slot.start_time
+        validated_data['end_time'] = time_slot.end_time
+        validated_data['room'] = room.name
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        time_slot = validated_data.get('time_slot', instance.time_slot)
+        room = validated_data.get('room_ref', instance.room_ref)
+        validated_data['start_time'] = time_slot.start_time
+        validated_data['end_time'] = time_slot.end_time
+        validated_data['room'] = room.name
+        return super().update(instance, validated_data)
+
+
+class RoutineRequirementSerializer(serializers.ModelSerializer):
+    course = CourseSerializer(read_only=True)
+    course_id = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all(), source='course', write_only=True)
+    teacher = TeacherSerializer(read_only=True)
+    teacher_id = serializers.PrimaryKeyRelatedField(queryset=Teacher.objects.all(), source='teacher', write_only=True)
+
+    class Meta:
+        model = RoutineRequirement
+        fields = [
+            'id', 'course', 'course_id', 'teacher', 'teacher_id', 'section',
+            'sessions_per_week', 'required_room_type', 'created_at'
+        ]
         
 class RoutineChangeRequestSerializer(serializers.ModelSerializer):
     routine = RoutineSerializer(read_only=True)
