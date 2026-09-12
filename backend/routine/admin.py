@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import Attendance, AttendanceAction, Teacher, Course, Routine, RoutineChangeRequest, RoutineEnrollment
+from .models import (
+    Attendance, AttendanceAction, Teacher, Course, Room, TimeSlot, Routine,
+    RoutineChangeRequest, RoutineEnrollment, RoutineRequirement
+)
 
 
 # -------------------------
@@ -25,9 +28,28 @@ class CourseAdmin(admin.ModelAdmin):
     list_display = ['name', 'code']
 
 
+@admin.register(Room)
+class RoomAdmin(admin.ModelAdmin):
+    list_display = ['name', 'room_type']
+    list_filter = ['room_type']
+
+
+@admin.register(TimeSlot)
+class TimeSlotAdmin(admin.ModelAdmin):
+    list_display = ['label', 'start_time', 'end_time', 'order']
+    ordering = ['order', 'start_time']
+
+
+@admin.register(RoutineRequirement)
+class RoutineRequirementAdmin(admin.ModelAdmin):
+    list_display = ['course', 'teacher', 'section', 'sessions_per_week', 'required_room_type']
+    list_filter = ['required_room_type']
+
+
 @admin.register(Routine)
 class RoutineAdmin(admin.ModelAdmin):
-    list_display = ['teacher', 'course', 'day', 'start_time', 'end_time', 'room']
+    list_display = ['teacher', 'course', 'day', 'section', 'time_slot', 'room_ref']
+    list_filter = ['day', 'room_ref']
 
 
 @admin.register(RoutineEnrollment)

@@ -12,10 +12,45 @@ class Teacher(models.Model):
 class Course(models.Model):
     name = models.CharField(max_length=100)
     code = models.CharField(max_length=10)
-    
+
     def __str__(self):
         return f"{self.name}-{self.code}"
-    
+
+
+class Room(models.Model):
+    THEORY = 'Theory'
+    LAB = 'Lab'
+    ROOM_TYPES = [
+        (THEORY, 'Theory'),
+        (LAB, 'Lab'),
+    ]
+
+    name = models.CharField(max_length=50, unique=True)
+    room_type = models.CharField(max_length=10, choices=ROOM_TYPES, default=THEORY)
+
+    def __str__(self):
+        return self.name
+
+
+class TimeSlot(models.Model):
+    label = models.CharField(max_length=30, blank=True, default='')
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order', 'start_time']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['start_time', 'end_time'],
+                name='unique_timeslot_range',
+            )
+        ]
+
+    def __str__(self):
+        return self.label or f"{self.start_time.strftime('%H:%M')}-{self.end_time.strftime('%H:%M')}"
+
+
 class Routine(models.Model):
     DAYS_OF_WEEK = [
         ('Monday', 'Monday'),
@@ -26,15 +61,46 @@ class Routine(models.Model):
         ('Saturday', 'Saturday'),
         ('Sunday', 'Sunday'),
     ]
-    teacher = models.ForeignKey(Teacher, on_delete = models.CASCADE)
+    teacher = models.ForeignKey(Teacher, on_delete=models.CASCADE, null=True, blank=True)
     course = models.ForeignKey(Course, on_delete = models.CASCADE)
     day = models.CharField(max_length=20, choices=DAYS_OF_WEEK)
+    section = models.CharField(max_length=20, blank=True, default='')
+    room_ref = models.ForeignKey(Room, on_delete=models.PROTECT, null=True, blank=True, related_name='routines')
+    time_slot = models.ForeignKey(TimeSlot, on_delete=models.PROTECT, null=True, blank=True, related_name='routines')
+    # Legacy free-form fields, kept during the Room/TimeSlot migration for backward compatibility.
+    # Superseded by room_ref/time_slot; slated for removal once those are backfilled and verified.
     start_time = models.TimeField()
     end_time = models.TimeField()
     room = models.CharField(max_length=50)
-    
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['teacher', 'day', 'time_slot'],
+                name='unique_teacher_day_slot',
+                condition=models.Q(time_slot__isnull=False, teacher__isnull=False),
+            ),
+            models.UniqueConstraint(
+                fields=['room_ref', 'day', 'time_slot'],
+                name='unique_room_day_slot',
+                condition=models.Q(time_slot__isnull=False, room_ref__isnull=False),
+            ),
+        ]
+
     def __str__(self):
         return f"{self.course} by {self.teacher} on {self.day} from {self.start_time} to {self.end_time} at {self.room}"
+
+
+class RoutineRequirement(models.Model):
+    course = models.ForeignKey(Course, on_delete=models.CASCADE)
+    teacher = models.ForeignKey(Teacher, on_delete=models.CASCADE)
+    section = models.CharField(max_length=20)
+    sessions_per_week = models.PositiveSmallIntegerField()
+    required_room_type = models.CharField(max_length=10, choices=Room.ROOM_TYPES, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.course} / {self.section} by {self.teacher} x{self.sessions_per_week}"
 
 
 class RoutineEnrollment(models.Model):
