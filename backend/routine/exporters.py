@@ -6,14 +6,23 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .models import Room, TimeSlot
-
-
-EXCEL_HEADERS = ['Day', 'TimeSlot', 'Room', 'CourseCode', 'TeacherEmail', 'Section']
+from .models import Room, Routine, TimeSlot
 
 
 def _timeslot_label(time_slot):
     return f"{time_slot.start_time.strftime('%H:%M')}-{time_slot.end_time.strftime('%H:%M')}"
+
+
+def _timeslot_label_ampm(time_slot):
+    start = time_slot.start_time.strftime('%I:%M %p').lstrip('0')
+    end = time_slot.end_time.strftime('%I:%M %p').lstrip('0')
+    return f"{start} - {end}"
+
+
+def _faculty_label(teacher):
+    if not teacher:
+        return 'TBA'
+    return teacher.acronym or teacher.name
 
 
 def export_routines_pdf(routines):
@@ -73,20 +82,62 @@ def export_routines_pdf(routines):
 
 
 def export_routines_excel(routines):
+    """Build the Central_Class_Routine-style grid: day blocks, one row per Room, one
+    3-column (Course Code/Section/Faculty) group per TimeSlot. Mirrors what
+    scheduling.import_routine_grid_from_workbook expects, so export -> hand-edit ->
+    import round-trips.
+    """
+    rooms = list(Room.objects.order_by('name'))
+    slots = list(TimeSlot.objects.order_by('order', 'start_time'))
+    days_order = [choice[0] for choice in Routine.DAYS_OF_WEEK]
+
+    by_day_room_slot = {}
+    for routine in routines:
+        if routine.room_ref_id is None or routine.time_slot_id is None:
+            continue
+        by_day_room_slot[(routine.day, routine.room_ref_id, routine.time_slot_id)] = routine
+
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = 'Routine'
-    sheet.append(EXCEL_HEADERS)
+    sheet.title = 'Central_Class_Routine'
 
-    for routine in routines:
-        sheet.append([
-            routine.day,
-            _timeslot_label(routine.time_slot) if routine.time_slot else '',
-            routine.room_ref.name if routine.room_ref else routine.room,
-            routine.course.code,
-            routine.teacher.email if routine.teacher else 'TBA',
-            routine.section,
-        ])
+    last_col = 1 + 3 * len(slots)
+    row = 1
+    for day in days_order:
+        sheet.cell(row=row, column=2, value=day)
+        if last_col > 2:
+            sheet.merge_cells(start_row=row, start_column=2, end_row=row, end_column=last_col)
+        row += 1
+
+        sheet.cell(row=row, column=1, value='Room')
+        col = 2
+        for slot in slots:
+            sheet.cell(row=row, column=col, value=_timeslot_label_ampm(slot))
+            sheet.merge_cells(start_row=row, start_column=col, end_row=row, end_column=col + 2)
+            col += 3
+        row += 1
+
+        col = 2
+        for _ in slots:
+            sheet.cell(row=row, column=col, value='Course Code')
+            sheet.cell(row=row, column=col + 1, value='Section')
+            sheet.cell(row=row, column=col + 2, value='Faculty')
+            col += 3
+        row += 1
+
+        for room in rooms:
+            sheet.cell(row=row, column=1, value=room.name)
+            col = 2
+            for slot in slots:
+                routine = by_day_room_slot.get((day, room.id, slot.id))
+                if routine:
+                    sheet.cell(row=row, column=col, value=routine.course.code)
+                    sheet.cell(row=row, column=col + 1, value=routine.section)
+                    sheet.cell(row=row, column=col + 2, value=_faculty_label(routine.teacher))
+                col += 3
+            row += 1
+
+        row += 1  # blank separator row between day blocks
 
     buffer = io.BytesIO()
     workbook.save(buffer)

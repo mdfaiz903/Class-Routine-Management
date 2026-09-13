@@ -10,8 +10,10 @@ from .models import (
 # -------------------------
 @admin.register(Teacher)
 class TeacherAdmin(admin.ModelAdmin):
-    list_display = ['user', 'name', 'email']
+    list_display = ['user', 'name', 'email', 'acronym', 'designation', 'department']
+    list_filter = ['department']
     readonly_fields = ['name', 'email']
+    filter_horizontal = ['specializations']
 
     def save_model(self, request, obj, form, change):
         # auto sync from User model
@@ -25,7 +27,7 @@ class TeacherAdmin(admin.ModelAdmin):
 # -------------------------
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
-    list_display = ['name', 'code']
+    list_display = ['name', 'code', 'credit']
 
 
 @admin.register(Room)

@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import API from '../api/axios';
 import Modal from '../components/Modal';
 import { useAuth } from '../context/useAuth';
+import { downloadCsvTemplate } from '../utils/csv';
 
 export default function Courses() {
     const { user } = useAuth();
@@ -9,8 +10,11 @@ export default function Courses() {
     const [loading, setLoading] = useState(true);
     const [modalOpen, setModalOpen] = useState(false);
     const [editing, setEditing] = useState(null);
-    const [form, setForm] = useState({ name: '', code: '' });
+    const [form, setForm] = useState({ name: '', code: '', credit: 0 });
     const [error, setError] = useState('');
+    const [importResult, setImportResult] = useState(null);
+    const [importModalOpen, setImportModalOpen] = useState(false);
+    const fileInputRef = useRef(null);
 
     const fetchCourses = async () => {
         try {
@@ -29,14 +33,14 @@ export default function Courses() {
 
     const openCreate = () => {
         setEditing(null);
-        setForm({ name: '', code: '' });
+        setForm({ name: '', code: '', credit: 0 });
         setError('');
         setModalOpen(true);
     };
 
     const openEdit = (course) => {
         setEditing(course);
-        setForm({ name: course.name, code: course.code });
+        setForm({ name: course.name, code: course.code, credit: course.credit ?? 0 });
         setError('');
         setModalOpen(true);
     };
@@ -67,6 +71,34 @@ export default function Courses() {
         }
     };
 
+    const handleDownloadTemplate = () => {
+        downloadCsvTemplate('courses_template.csv', ['name', 'code', 'credit']);
+    };
+
+    const handleImportClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleImportFile = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await API.post('courses/import-csv/', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            setImportResult(res.data);
+            setImportModalOpen(true);
+            fetchCourses();
+        } catch (err) {
+            setImportResult({ errors: [{ row: '-', error: err.response?.data?.detail || 'Import failed' }], created_count: 0, failed_count: 1 });
+            setImportModalOpen(true);
+        }
+    };
+
     if (loading) {
         return (
             <div className="page-loading">
@@ -80,9 +112,24 @@ export default function Courses() {
             <div className="page-header">
                 <h2>Courses</h2>
                 {user?.isAdmin && (
-                    <button className="btn btn-primary" onClick={openCreate}>
-                        + Add Course
-                    </button>
+                    <div className="header-left">
+                        <button className="btn btn-secondary btn-sm" onClick={handleDownloadTemplate}>
+                            Download Template
+                        </button>
+                        <button className="btn btn-secondary btn-sm" onClick={handleImportClick}>
+                            Import CSV
+                        </button>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".csv"
+                            style={{ display: 'none' }}
+                            onChange={handleImportFile}
+                        />
+                        <button className="btn btn-primary" onClick={openCreate}>
+                            + Add Course
+                        </button>
+                    </div>
                 )}
             </div>
 
@@ -93,13 +140,14 @@ export default function Courses() {
                             <th>ID</th>
                             <th>Name</th>
                             <th>Code</th>
+                            <th>Credit</th>
                             {user?.isAdmin && <th>Actions</th>}
                         </tr>
                     </thead>
                     <tbody>
                         {courses.length === 0 ? (
                             <tr>
-                                <td colSpan={user?.isAdmin ? 4 : 3} className="empty-row">No courses found</td>
+                                <td colSpan={user?.isAdmin ? 5 : 4} className="empty-row">No courses found</td>
                             </tr>
                         ) : (
                             courses.map((c) => (
@@ -107,6 +155,7 @@ export default function Courses() {
                                     <td>{c.id}</td>
                                     <td>{c.name}</td>
                                     <td><span className="badge">{c.code}</span></td>
+                                    <td>{c.credit}</td>
                                     {user?.isAdmin && (
                                         <td className="actions-cell">
                                             <button className="btn btn-sm btn-edit" onClick={() => openEdit(c)}>
@@ -148,6 +197,16 @@ export default function Courses() {
                         />
                     </div>
 
+                    <div className="form-group">
+                        <label>Credit</label>
+                        <input
+                            type="number"
+                            min="0"
+                            value={form.credit}
+                            onChange={(e) => setForm({ ...form, credit: Number(e.target.value) })}
+                        />
+                    </div>
+
                     <div className="form-actions">
                         <button type="button" className="btn btn-secondary" onClick={() => setModalOpen(false)}>
                             Cancel
@@ -157,6 +216,36 @@ export default function Courses() {
                         </button>
                     </div>
                 </form>
+            </Modal>
+
+            <Modal isOpen={importModalOpen} onClose={() => setImportModalOpen(false)} title="Import Results">
+                {importResult && (
+                    <div>
+                        <div className={importResult.failed_count > 0 ? 'alert alert-error' : 'alert alert-success'}>
+                            Created {importResult.created_count} row(s), {importResult.failed_count} failed.
+                        </div>
+                        {importResult.errors?.length > 0 && (
+                            <div className="table-container">
+                                <table className="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Row</th>
+                                            <th>Error</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {importResult.errors.map((err, i) => (
+                                            <tr key={i}>
+                                                <td>{err.row}</td>
+                                                <td className="reason-cell">{err.error}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                )}
             </Modal>
         </div>
     );

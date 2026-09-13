@@ -168,6 +168,7 @@ export default function Routines() {
     };
 
     const handleImportClick = () => {
+        if (!window.confirm('This replaces the entire current routine with the uploaded file. Continue?')) return;
         fileInputRef.current?.click();
     };
 
@@ -243,7 +244,7 @@ export default function Routines() {
                     {user?.isAdmin && (
                         <>
                             <button className="btn btn-secondary btn-sm" onClick={handleImportClick}>
-                                Import Excel
+                                Import & Replace Routine
                             </button>
                             <input
                                 ref={fileInputRef}
