@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import API from '../api/axios';
 import Modal from '../components/Modal';
 import { useAuth } from '../context/useAuth';
+import { downloadCsvTemplate } from '../utils/csv';
 
 const ROOM_TYPES = ['Theory', 'Lab'];
 
@@ -13,6 +14,9 @@ export default function Rooms() {
     const [editing, setEditing] = useState(null);
     const [form, setForm] = useState({ name: '', room_type: 'Theory' });
     const [error, setError] = useState('');
+    const [importResult, setImportResult] = useState(null);
+    const [importModalOpen, setImportModalOpen] = useState(false);
+    const fileInputRef = useRef(null);
 
     const fetchRooms = async () => {
         try {
@@ -69,6 +73,34 @@ export default function Rooms() {
         }
     };
 
+    const handleDownloadTemplate = () => {
+        downloadCsvTemplate('rooms_template.csv', ['name', 'room_type']);
+    };
+
+    const handleImportClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleImportFile = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await API.post('rooms/import-csv/', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            setImportResult(res.data);
+            setImportModalOpen(true);
+            fetchRooms();
+        } catch (err) {
+            setImportResult({ errors: [{ row: '-', error: err.response?.data?.detail || 'Import failed' }], created_count: 0, failed_count: 1 });
+            setImportModalOpen(true);
+        }
+    };
+
     if (loading) {
         return (
             <div className="page-loading">
@@ -82,9 +114,24 @@ export default function Rooms() {
             <div className="page-header">
                 <h2>Rooms</h2>
                 {user?.isAdmin && (
-                    <button className="btn btn-primary" onClick={openCreate}>
-                        + Add Room
-                    </button>
+                    <div className="header-left">
+                        <button className="btn btn-secondary btn-sm" onClick={handleDownloadTemplate}>
+                            Download Template
+                        </button>
+                        <button className="btn btn-secondary btn-sm" onClick={handleImportClick}>
+                            Import CSV
+                        </button>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".csv"
+                            style={{ display: 'none' }}
+                            onChange={handleImportFile}
+                        />
+                        <button className="btn btn-primary" onClick={openCreate}>
+                            + Add Room
+                        </button>
+                    </div>
                 )}
             </div>
 
@@ -161,6 +208,36 @@ export default function Rooms() {
                         </button>
                     </div>
                 </form>
+            </Modal>
+
+            <Modal isOpen={importModalOpen} onClose={() => setImportModalOpen(false)} title="Import Results">
+                {importResult && (
+                    <div>
+                        <div className={importResult.failed_count > 0 ? 'alert alert-error' : 'alert alert-success'}>
+                            Created {importResult.created_count} row(s), {importResult.failed_count} failed.
+                        </div>
+                        {importResult.errors?.length > 0 && (
+                            <div className="table-container">
+                                <table className="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Row</th>
+                                            <th>Error</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {importResult.errors.map((err, i) => (
+                                            <tr key={i}>
+                                                <td>{err.row}</td>
+                                                <td className="reason-cell">{err.error}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                )}
             </Modal>
         </div>
     );

@@ -12,6 +12,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 
+from . import imports as bulk_imports
 from . import scheduling
 from .exporters import export_routines_excel, export_routines_pdf
 from .models import (
@@ -58,6 +59,13 @@ class TeacherViewSet(viewsets.ModelViewSet):
     serializer_class = TeacherSerializer
     permission_classes = [IsAdminUser]
 
+    @action(detail=False, methods=['post'], url_path='import-csv', parser_classes=[MultiPartParser])
+    def import_csv(self, request):
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({"detail": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(bulk_imports.import_teachers_from_csv(upload))
+
 
 # -------------------------
 # USERS (ADMIN SELECTS WHO BECOMES TEACHER)
@@ -102,9 +110,16 @@ class CourseViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'import_csv']:
             return [IsAdminUser()]
         return [permissions.IsAuthenticated()]
+
+    @action(detail=False, methods=['post'], url_path='import-csv', parser_classes=[MultiPartParser])
+    def import_csv(self, request):
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({"detail": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(bulk_imports.import_courses_from_csv(upload))
 
 
 # -------------------------
@@ -115,9 +130,16 @@ class RoomViewSet(viewsets.ModelViewSet):
     serializer_class = RoomSerializer
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'import_csv']:
             return [IsAdminUser()]
         return [permissions.IsAuthenticated()]
+
+    @action(detail=False, methods=['post'], url_path='import-csv', parser_classes=[MultiPartParser])
+    def import_csv(self, request):
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({"detail": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(bulk_imports.import_rooms_from_csv(upload))
 
 
 # -------------------------
@@ -128,9 +150,16 @@ class TimeSlotViewSet(viewsets.ModelViewSet):
     serializer_class = TimeSlotSerializer
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'import_csv']:
             return [IsAdminUser()]
         return [permissions.IsAuthenticated()]
+
+    @action(detail=False, methods=['post'], url_path='import-csv', parser_classes=[MultiPartParser])
+    def import_csv(self, request):
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({"detail": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(bulk_imports.import_timeslots_from_csv(upload))
 
 
 # -------------------------
@@ -264,7 +293,7 @@ class RoutineViewSet(viewsets.ModelViewSet):
         except Exception:
             return Response({"detail": "Could not read the uploaded file as an Excel workbook."}, status=status.HTTP_400_BAD_REQUEST)
 
-        report = scheduling.import_routines_from_workbook(workbook)
+        report = scheduling.import_routine_grid_from_workbook(workbook)
         return Response(report)
 
 

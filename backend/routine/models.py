@@ -1,20 +1,27 @@
 from django.db import models
 from django.contrib.auth.models import User
 # Create your models here.
+class Course(models.Model):
+    name = models.CharField(max_length=100)
+    code = models.CharField(max_length=10)
+    credit = models.PositiveSmallIntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.name}-{self.code}"
+
+
 class Teacher(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
     email = models.EmailField(unique=True, default='')
-    
-    def __str__(self):
-        return self.name 
-
-class Course(models.Model):
-    name = models.CharField(max_length=100)
-    code = models.CharField(max_length=10)
+    acronym = models.CharField(max_length=10, blank=True, default='')
+    designation = models.CharField(max_length=100, blank=True, default='')
+    department = models.CharField(max_length=100, blank=True, default='')
+    mobile_number = models.CharField(max_length=20, blank=True, default='')
+    specializations = models.ManyToManyField(Course, related_name='qualified_teachers', blank=True)
 
     def __str__(self):
-        return f"{self.name}-{self.code}"
+        return self.name
 
 
 class Room(models.Model):
@@ -93,7 +100,7 @@ class Routine(models.Model):
 
 class RoutineRequirement(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE)
-    teacher = models.ForeignKey(Teacher, on_delete=models.CASCADE)
+    teacher = models.ForeignKey(Teacher, on_delete=models.CASCADE, null=True, blank=True)
     section = models.CharField(max_length=20)
     sessions_per_week = models.PositiveSmallIntegerField()
     required_room_type = models.CharField(max_length=10, choices=Room.ROOM_TYPES, blank=True, null=True)

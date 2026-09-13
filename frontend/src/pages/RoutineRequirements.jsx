@@ -64,7 +64,7 @@ export default function RoutineRequirements() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
-        const payload = { ...form, required_room_type: form.required_room_type || null };
+        const payload = { ...form, teacher_id: form.teacher_id || null, required_room_type: form.required_room_type || null };
         try {
             if (editing) {
                 await API.patch(`routine-requirements/${editing.id}/`, payload);
@@ -129,7 +129,7 @@ export default function RoutineRequirements() {
                                         <div className="cell-main">{req.course?.name}</div>
                                         <div className="cell-sub">{req.course?.code}</div>
                                     </td>
-                                    <td>{req.teacher?.name}</td>
+                                    <td>{req.teacher?.name || 'Auto-assign'}</td>
                                     <td><span className="badge">{req.section}</span></td>
                                     <td>{req.sessions_per_week}</td>
                                     <td>{req.required_room_type || 'Any'}</td>
@@ -172,9 +172,8 @@ export default function RoutineRequirements() {
                             <select
                                 value={form.teacher_id}
                                 onChange={(e) => setForm({ ...form, teacher_id: e.target.value })}
-                                required
                             >
-                                <option value="">Select Teacher</option>
+                                <option value="">Auto-assign (by specialization)</option>
                                 {teachers.map((t) => (
                                     <option key={t.id} value={t.id}>{t.name}</option>
                                 ))}

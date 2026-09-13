@@ -460,6 +460,12 @@ body {
   color: #34d399;
 }
 
+.alert-warning {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #fbbf24;
+}
+
 /* ===== APP LAYOUT ===== */
 .app-layout {
   display: flex;
@@ -956,10 +962,9 @@ body {
 }
 
 .reason-cell {
-  max-width: 250px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 420px;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .date-cell {

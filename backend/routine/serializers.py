@@ -99,6 +99,12 @@ class UserSerializer(serializers.ModelSerializer):
         return 'Student'
 
 
+class CourseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Course
+        fields = ['id', 'name', 'code', 'credit']
+
+
 # -------------------------
 # TEACHER (ADMIN CREATES ROLE)
 # -------------------------
@@ -110,9 +116,17 @@ class TeacherSerializer(serializers.ModelSerializer):
 
     name = serializers.CharField(read_only=True)
     email = serializers.CharField(read_only=True)
+    specializations = CourseSerializer(many=True, read_only=True)
+    specialization_ids = serializers.PrimaryKeyRelatedField(
+        queryset=Course.objects.all(), source='specializations', many=True, write_only=True, required=False
+    )
+
     class Meta:
         model = Teacher
-        fields = ['id', 'user_id', 'name', 'email']
+        fields = [
+            'id', 'user_id', 'name', 'email', 'acronym', 'designation', 'department',
+            'mobile_number', 'specializations', 'specialization_ids'
+        ]
 
     def validate_user_id(self, user):
         if user.is_superuser:
@@ -123,20 +137,21 @@ class TeacherSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = validated_data['user']
+        specializations = validated_data.pop('specializations', [])
 
         teacher = Teacher.objects.create(
             user=user,
             name=user.first_name,
-            email=user.email
+            email=user.email,
+            acronym=validated_data.get('acronym', ''),
+            designation=validated_data.get('designation', ''),
+            department=validated_data.get('department', ''),
+            mobile_number=validated_data.get('mobile_number', ''),
         )
+        if specializations:
+            teacher.specializations.set(specializations)
 
         return teacher
-
-        
-class CourseSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Course
-        fields = ['id', 'name', 'code']
 
 
 class RoomSerializer(serializers.ModelSerializer):
@@ -255,7 +270,9 @@ class RoutineRequirementSerializer(serializers.ModelSerializer):
     course = CourseSerializer(read_only=True)
     course_id = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all(), source='course', write_only=True)
     teacher = TeacherSerializer(read_only=True)
-    teacher_id = serializers.PrimaryKeyRelatedField(queryset=Teacher.objects.all(), source='teacher', write_only=True)
+    teacher_id = serializers.PrimaryKeyRelatedField(
+        queryset=Teacher.objects.all(), source='teacher', write_only=True, required=False, allow_null=True
+    )
 
     class Meta:
         model = RoutineRequirement
